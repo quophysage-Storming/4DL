@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { spawn } from 'child_process';
+import { spawn, ChildProcess } from 'child_process';
 import { isValidUrl } from '@/lib/downloader';
 
 export async function GET(req: NextRequest) {
@@ -48,116 +48,124 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // Determine yt-dlp format specification based on requested format
-  let formatSpec = '18/22/b/best';
-  if (isAudio) {
-    formatSpec = 'ba/bestaudio/b/best';
-  } else if (formatId === '4k-2160p') {
-    formatSpec = 'best[height<=2160]/18/22/b/best';
-  } else if (formatId === '1080p') {
-    formatSpec = 'best[height<=1080]/18/22/b/best';
-  } else if (formatId === '720p') {
-    formatSpec = 'best[height<=720]/18/22/b/best';
-  } else if (formatId === '480p') {
-    formatSpec = 'best[height<=480]/18/22/b/best';
-  }
+  const formatSpec = isAudio ? 'ba/bestaudio/b/best' : 'b/best/18/22';
+  const env = {
+    ...process.env,
+    PATH: (process.env.PATH || '') + ':/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin',
+  };
 
-  const ytdlpArgs = [
-    '-o', '-',
-    '-f', formatSpec,
-    '--no-playlist',
-    '--js-runtimes', 'node',
-    '--remote-components', 'ejs:github',
-    targetUrl,
-  ];
+  const trySpawnYtdlp = (args: string[]): Promise<{ proc: ChildProcess | null; firstChunk: Buffer | null }> => {
+    return new Promise((resolve) => {
+      let proc: ChildProcess;
+      try {
+        proc = spawn('yt-dlp', args, { env });
+      } catch {
+        return resolve({ proc: null, firstChunk: null });
+      }
 
-  try {
-    const proc = spawn('yt-dlp', ytdlpArgs);
-
-    // Await the first chunk of video stdout data to ensure yt-dlp successfully started streaming
-    const firstChunk = await new Promise<Buffer | null>((resolve) => {
       let resolved = false;
 
-      proc.stdout.once('data', (chunk: Buffer) => {
+      proc.stdout?.once('data', (chunk: Buffer) => {
         if (!resolved) {
           resolved = true;
-          resolve(chunk);
+          resolve({ proc, firstChunk: chunk });
         }
       });
 
       proc.on('error', () => {
         if (!resolved) {
           resolved = true;
-          resolve(null);
+          resolve({ proc: null, firstChunk: null });
         }
       });
 
       proc.on('close', () => {
         if (!resolved) {
           resolved = true;
-          resolve(null);
+          resolve({ proc: null, firstChunk: null });
         }
       });
 
       setTimeout(() => {
         if (!resolved) {
           resolved = true;
-          resolve(null);
+          try { proc.kill(); } catch {}
+          resolve({ proc: null, firstChunk: null });
         }
       }, 20000);
     });
+  };
 
-    if (!firstChunk) {
-      try { proc.kill(); } catch {}
-      return NextResponse.json(
-        { error: 'Could not fetch video stream from the provided link.' },
-        { status: 500 }
-      );
-    }
+  // Primary attempt with format selection
+  let { proc, firstChunk } = await trySpawnYtdlp([
+    '-o', '-',
+    '-f', formatSpec,
+    '--no-playlist',
+    '--js-runtimes', 'node',
+    '--remote-components', 'ejs:github',
+    targetUrl,
+  ]);
 
-    const stream = new ReadableStream({
-      start(controller) {
-        controller.enqueue(new Uint8Array(firstChunk));
-
-        proc.stdout.on('data', (chunk: Buffer) => {
-          try {
-            controller.enqueue(new Uint8Array(chunk));
-          } catch {
-            // Stream controller might be closed
-          }
-        });
-
-        proc.stdout.on('end', () => {
-          try {
-            controller.close();
-          } catch {
-            // Stream controller might be closed
-          }
-        });
-
-        proc.stdout.on('error', (err) => {
-          try {
-            controller.error(err);
-          } catch {
-            // Stream controller error handling
-          }
-        });
-      },
-      cancel() {
-        try { proc.kill(); } catch {}
-      },
-    });
-
-    return new NextResponse(stream, {
-      status: 200,
-      headers: {
-        'Content-Type': isAudio ? 'audio/mpeg' : 'video/mp4',
-        'Content-Disposition': `attachment; filename="${filename}"`,
-        'Cache-Control': 'no-cache, no-store, must-revalidate',
-      },
-    });
-  } catch (error: unknown) {
-    const msg = error instanceof Error ? error.message : 'Failed to download video stream';
-    return NextResponse.json({ error: msg }, { status: 500 });
+  // Fallback attempt without -f format restriction if primary yielded no stream data
+  if (!firstChunk) {
+    const fallbackRes = await trySpawnYtdlp([
+      '-o', '-',
+      '--no-playlist',
+      '--js-runtimes', 'node',
+      '--remote-components', 'ejs:github',
+      targetUrl,
+    ]);
+    proc = fallbackRes.proc;
+    firstChunk = fallbackRes.firstChunk;
   }
+
+  if (!firstChunk || !proc) {
+    return NextResponse.json(
+      { error: 'Could not fetch video stream from the provided link.' },
+      { status: 500 }
+    );
+  }
+
+  const activeProc = proc;
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new Uint8Array(firstChunk));
+
+      activeProc.stdout?.on('data', (chunk: Buffer) => {
+        try {
+          controller.enqueue(new Uint8Array(chunk));
+        } catch {
+          // Stream controller might be closed
+        }
+      });
+
+      activeProc.stdout?.on('end', () => {
+        try {
+          controller.close();
+        } catch {
+          // Stream controller might be closed
+        }
+      });
+
+      activeProc.stdout?.on('error', (err) => {
+        try {
+          controller.error(err);
+        } catch {
+          // Stream controller error handling
+        }
+      });
+    },
+    cancel() {
+      try { activeProc.kill(); } catch {}
+    },
+  });
+
+  return new NextResponse(stream, {
+    status: 200,
+    headers: {
+      'Content-Type': isAudio ? 'audio/mpeg' : 'video/mp4',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+    },
+  });
 }

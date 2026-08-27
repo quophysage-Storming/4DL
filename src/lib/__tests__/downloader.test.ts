@@ -18,18 +18,21 @@ describe('4DL Video Downloader Core Unit Tests', () => {
     expect(isValidUrl('')).toBe(false);
   });
 
-  it('returns standard formats including 4K Ultra HD', () => {
-    const formats = getStandardFormats('Test Video');
+  it('returns standard formats including 4K Ultra HD and populates videoUrl', () => {
+    const testUrl = 'https://example.com/video';
+    const formats = getStandardFormats('Test Video', testUrl);
     expect(formats.length).toBeGreaterThan(0);
     const has4k = formats.some((f) => f.formatId === '4k-2160p');
     expect(has4k).toBe(true);
+    expect(formats[0].url).toBe(testUrl);
   });
 
-  it('extracts real video details with thumbnail and formats', async () => {
+  it('extracts real video details with thumbnail and populated format URLs', async () => {
     const info = await getRealVideoDetails('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
     expect(info.platform).toBe('youtube');
     expect(info.title).toContain('Rick Astley');
     expect(info.thumbnail).toBeTruthy();
     expect(info.formats.length).toBeGreaterThan(0);
-  });
+    expect(info.formats[0].url).toBeTruthy();
+  }, 15000);
 });

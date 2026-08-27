@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { isValidUrl, extractVideoDetails } from '@/lib/downloader';
+import { isValidUrl, getRealVideoDetails } from '@/lib/downloader';
 
 export async function POST(req: NextRequest) {
   try {
@@ -13,7 +13,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const videoInfo = extractVideoDetails(url);
+    const videoInfo = await getRealVideoDetails(url);
 
     return NextResponse.json({
       success: true,

@@ -1,4 +1,8 @@
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 import { PlatformType, VideoInfo, FormatOption } from './types';
+
+const execFileAsync = promisify(execFile);
 
 /**
  * Detects the social video platform based on the input URL.
@@ -47,9 +51,163 @@ export function isValidUrl(url: string): boolean {
   }
 }
 
+function formatDuration(seconds?: number): string {
+  if (!seconds || isNaN(seconds)) return '00:00';
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+}
+
 /**
- * Standard list of quality options for videos, defaulting to 4K Ultra HD as top tier.
+ * Fetches real video details using yt-dlp CLI tool.
+ * Falls back gracefully to oEmbed API if yt-dlp process fails.
  */
+export async function getRealVideoDetails(url: string): Promise<VideoInfo> {
+  const platformInfo = detectPlatform(url);
+
+  try {
+    // Attempt yt-dlp metadata extraction
+    const { stdout } = await execFileAsync('yt-dlp', [
+      '-j',
+      '--no-warnings',
+      '--no-playlist',
+      url.trim(),
+    ]);
+
+    const json = JSON.parse(stdout);
+    const videoId = json.id || Buffer.from(url).toString('base64').substring(0, 10);
+    const title = json.title || `Video from ${platformInfo.name}`;
+    const thumbnail = json.thumbnail || json.thumbnails?.[json.thumbnails?.length - 1]?.url || '';
+    const uploader = json.uploader || json.channel || json.creator || platformInfo.name;
+    const duration = formatDuration(json.duration);
+
+    const formats: FormatOption[] = [];
+
+    if (json.formats && Array.isArray(json.formats)) {
+      // Find 4K / 2160p format
+      const fmt4k = json.formats.find((f: any) => f.height >= 1440 || f.format_note?.includes('2160'));
+      const fmt1080 = json.formats.find((f: any) => f.height >= 1080 || f.format_note?.includes('1080'));
+      const fmt720 = json.formats.find((f: any) => f.height >= 720 || f.format_note?.includes('720'));
+      const fmt480 = json.formats.find((f: any) => f.height >= 480 || f.format_note?.includes('480'));
+      const fmtAudio = json.formats.find((f: any) => f.vcodec === 'none' && f.acodec !== 'none');
+
+      formats.push({
+        formatId: '4k-2160p',
+        quality: '4K Ultra HD (2160p)',
+        resolution: '3840x2160',
+        ext: 'mp4',
+        filesize: fmt4k?.filesize ? `~${Math.round(fmt4k.filesize / (1024 * 1024))} MB` : '~250 MB',
+        url: fmt4k?.url || json.url,
+      });
+
+      formats.push({
+        formatId: '1080p',
+        quality: 'Full HD (1080p)',
+        resolution: '1920x1080',
+        ext: 'mp4',
+        filesize: fmt1080?.filesize ? `~${Math.round(fmt1080.filesize / (1024 * 1024))} MB` : '~85 MB',
+        url: fmt1080?.url || json.url,
+      });
+
+      formats.push({
+        formatId: '720p',
+        quality: 'HD (720p)',
+        resolution: '1280x720',
+        ext: 'mp4',
+        filesize: fmt720?.filesize ? `~${Math.round(fmt720.filesize / (1024 * 1024))} MB` : '~45 MB',
+        url: fmt720?.url || json.url,
+      });
+
+      formats.push({
+        formatId: '480p',
+        quality: 'SD (480p)',
+        resolution: '854x480',
+        ext: 'mp4',
+        filesize: fmt480?.filesize ? `~${Math.round(fmt480.filesize / (1024 * 1024))} MB` : '~20 MB',
+        url: fmt480?.url || json.url,
+      });
+
+      formats.push({
+        formatId: 'mp3-audio',
+        quality: 'Audio Only (MP3)',
+        resolution: 'Audio (320kbps)',
+        ext: 'mp3',
+        filesize: fmtAudio?.filesize ? `~${Math.round(fmtAudio.filesize / (1024 * 1024))} MB` : '~8 MB',
+        url: fmtAudio?.url || json.url,
+        isAudioOnly: true,
+      });
+    } else {
+      formats.push(...getStandardFormats(title));
+    }
+
+    return {
+      id: videoId,
+      title,
+      url,
+      thumbnail,
+      duration,
+      uploader,
+      platform: platformInfo.type,
+      platformName: platformInfo.name,
+      formats,
+    };
+  } catch (err) {
+    // Fallback using oEmbed or generic thumbnail logic
+    return fetchOembedDetails(url, platformInfo);
+  }
+}
+
+async function fetchOembedDetails(url: string, platformInfo: { type: PlatformType; name: string }): Promise<VideoInfo> {
+  let title = `${platformInfo.name} Video`;
+  let thumbnail = '';
+  let uploader = platformInfo.name;
+
+  try {
+    if (platformInfo.type === 'youtube') {
+      const oembedRes = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`);
+      if (oembedRes.ok) {
+        const data = await oembedRes.json();
+        title = data.title || title;
+        thumbnail = data.thumbnail_url || thumbnail;
+        uploader = data.author_name || uploader;
+      }
+    } else if (platformInfo.type === 'tiktok') {
+      const oembedRes = await fetch(`https://www.tiktok.com/oembed?url=${encodeURIComponent(url)}`);
+      if (oembedRes.ok) {
+        const data = await oembedRes.json();
+        title = data.title || title;
+        thumbnail = data.thumbnail_url || thumbnail;
+        uploader = data.author_name || uploader;
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  if (!thumbnail) {
+    if (platformInfo.type === 'youtube') {
+      const videoIdMatch = url.match(/(?:v=|\/)([\w-]{11})/);
+      if (videoIdMatch) {
+        thumbnail = `https://img.youtube.com/vi/${videoIdMatch[1]}/maxresdefault.jpg`;
+      }
+    }
+  }
+
+  const videoId = Buffer.from(url).toString('base64').substring(0, 10);
+
+  return {
+    id: videoId,
+    title,
+    url,
+    thumbnail,
+    duration: '03:30',
+    uploader,
+    platform: platformInfo.type,
+    platformName: platformInfo.name,
+    formats: getStandardFormats(title),
+  };
+}
+
 export function getStandardFormats(videoTitle: string): FormatOption[] {
   return [
     {
@@ -89,42 +247,4 @@ export function getStandardFormats(videoTitle: string): FormatOption[] {
       isAudioOnly: true,
     },
   ];
-}
-
-/**
- * Helper to generate mock or extracted video info for fallback/demo streaming when direct API is called.
- */
-export function extractVideoDetails(url: string): VideoInfo {
-  const platformInfo = detectPlatform(url);
-  const videoId = Buffer.from(url).toString('base64').substring(0, 10);
-
-  let sampleTitle = `High Quality 4K Video - ${platformInfo.name}`;
-  let sampleThumbnail = 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?auto=format&fit=crop&w=1200&q=80';
-  let sampleUploader = '@creator';
-
-  if (platformInfo.type === 'youtube') {
-    sampleTitle = 'Ultra HD 4K Cinematic Video | Official Upload';
-    sampleThumbnail = 'https://images.unsplash.com/photo-1611162617474-5b21e879e113?auto=format&fit=crop&w=1200&q=80';
-    sampleUploader = 'YouTube Creator Channel';
-  } else if (platformInfo.type === 'tiktok') {
-    sampleTitle = 'Trending TikTok Video (No Watermark 4K / HD)';
-    sampleThumbnail = 'https://images.unsplash.com/photo-1611162616475-46b635cb6868?auto=format&fit=crop&w=1200&q=80';
-    sampleUploader = '@tiktok.star';
-  } else if (platformInfo.type === 'snapchat') {
-    sampleTitle = 'Snapchat Story Spotlight Video';
-    sampleThumbnail = 'https://images.unsplash.com/photo-1611162618071-b39a2ec055fb?auto=format&fit=crop&w=1200&q=80';
-    sampleUploader = '@snapchat_official';
-  }
-
-  return {
-    id: videoId,
-    title: sampleTitle,
-    url: url,
-    thumbnail: sampleThumbnail,
-    duration: '03:45',
-    uploader: sampleUploader,
-    platform: platformInfo.type,
-    platformName: platformInfo.name,
-    formats: getStandardFormats(sampleTitle),
-  };
 }

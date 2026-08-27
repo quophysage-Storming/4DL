@@ -1,20 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import {
-  Download,
-  Clipboard,
-  Sparkles,
-  PlayCircle,
-  CheckCircle2,
-  AlertCircle,
-  Loader2,
-  Film,
-  Music,
-  Check,
-  X,
-  Share2
-} from 'lucide-react';
+import { Download, Clipboard, AlertCircle, Loader2, X, Check } from 'lucide-react';
 import { VideoInfo, FormatOption } from '@/lib/types';
 
 export default function Downloader() {
@@ -34,13 +21,13 @@ export default function Downloader() {
         fetchVideoInfo(text);
       }
     } catch {
-      setError('Clipboard access denied or not supported. Please paste manually.');
+      setError('Clipboard access denied. Please paste the link manually.');
     }
   };
 
   const fetchVideoInfo = async (targetUrl: string) => {
     if (!targetUrl.trim()) {
-      setError('Please paste or enter a valid video link.');
+      setError('Please paste a valid video URL.');
       return;
     }
     setLoading(true);
@@ -57,7 +44,7 @@ export default function Downloader() {
 
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.error || 'Failed to extract video data');
+        throw new Error(data.error || 'Failed to fetch video details.');
       }
 
       setVideoInfo(data.data);
@@ -65,7 +52,7 @@ export default function Downloader() {
         setSelectedFormat(data.data.formats[0].formatId);
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'An error occurred while analyzing the link';
+      const msg = err instanceof Error ? err.message : 'Error fetching video information.';
       setError(msg);
     } finally {
       setLoading(false);
@@ -77,69 +64,61 @@ export default function Downloader() {
     fetchVideoInfo(url);
   };
 
-  const handleDownload = async () => {
+  const handleDownload = () => {
     if (!videoInfo) return;
     setDownloading(true);
 
-    try {
-      const downloadUrl = `/api/download?url=${encodeURIComponent(videoInfo.url)}&formatId=${selectedFormat}&title=${encodeURIComponent(videoInfo.title)}`;
+    const selectedFmt = videoInfo.formats.find(f => f.formatId === selectedFormat) || videoInfo.formats[0];
+    const directUrl = selectedFmt?.url || videoInfo.url;
 
-      const link = document.createElement('a');
-      link.href = downloadUrl;
-      link.download = `${videoInfo.title}_${selectedFormat}.mp4`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+    const downloadUrl = `/api/download?url=${encodeURIComponent(directUrl)}&title=${encodeURIComponent(videoInfo.title)}&formatId=${selectedFormat}`;
 
-      setDownloadSuccess(true);
-      setTimeout(() => setDownloadSuccess(false), 4000);
-    } catch {
-      setError('Failed to initiate download. Please try again.');
-    } finally {
-      setDownloading(false);
-    }
+    const link = document.createElement('a');
+    link.href = downloadUrl;
+    link.download = `${videoInfo.title.replace(/[^a-zA-Z0-9]/g, '_')}_${selectedFormat}.${selectedFmt?.ext || 'mp4'}`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    setDownloading(false);
+    setDownloadSuccess(true);
+    setTimeout(() => setDownloadSuccess(false), 4000);
   };
 
   return (
-    <section id="downloader" className="py-12 px-4 sm:px-6 lg:px-8 max-w-5xl mx-auto">
-      {/* Title & Tagline */}
-      <div className="text-center mb-10">
-        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-purple-500/10 border border-purple-500/20 text-purple-400 text-xs font-semibold mb-4">
-          <Sparkles className="w-4 h-4" /> Ultra HD 4K Support for YouTube, TikTok, Snapchat & More
-        </div>
-        <h1 className="text-4xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight text-white mb-4">
-          Download HD & <span className="bg-gradient-to-r from-purple-400 via-pink-500 to-red-500 bg-clip-text text-transparent">4K Videos</span> Instantly
+    <section id="downloader" className="py-10 px-4 max-w-4xl mx-auto">
+      <div className="text-center mb-8">
+        <h1 className="text-3xl sm:text-4xl font-bold text-gray-900 mb-2">
+          Download Videos in 4K Quality
         </h1>
-        <p className="text-slate-400 text-lg max-w-2xl mx-auto">
-          Paste any link from YouTube, TikTok, Snapchat, Instagram, or Twitter/X. Download watermark-free videos in 4K resolution completely free.
+        <p className="text-gray-600 text-sm sm:text-base max-w-xl mx-auto">
+          Paste link from YouTube, TikTok, Snapchat, Instagram, or X (Twitter) to download high quality video files.
         </p>
       </div>
 
-      {/* Downloader Form Card */}
-      <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 sm:p-6 shadow-2xl backdrop-blur-xl mb-8">
+      <div className="bg-white border border-gray-200 rounded-lg p-4 sm:p-5 shadow-sm mb-6">
         <form onSubmit={handleSubmit} className="flex flex-col sm:flex-row gap-3">
           <div className="relative flex-1">
             <input
               type="text"
               value={url}
               onChange={(e) => setUrl(e.target.value)}
-              placeholder="Paste video URL here (e.g. YouTube, TikTok, Snapchat)..."
-              className="w-full bg-slate-950/70 border border-slate-700/80 rounded-xl px-4 py-4 text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all pr-24"
+              placeholder="Paste video link here (YouTube, TikTok, Snapchat)..."
+              className="w-full border border-gray-300 rounded px-3.5 py-3 text-sm text-gray-900 focus:outline-none focus:border-black pr-20"
             />
             {url ? (
               <button
                 type="button"
                 onClick={() => { setUrl(''); setVideoInfo(null); setError(null); }}
-                className="absolute right-3 top-1/2 -translate-y-1/2 p-2 text-slate-400 hover:text-white transition-colors"
-                title="Clear"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-black"
               >
-                <X className="w-5 h-5" />
+                <X className="w-4 h-4" />
               </button>
             ) : (
               <button
                 type="button"
                 onClick={handlePaste}
-                className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg transition-colors border border-slate-700"
+                className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1 text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-2.5 py-1 rounded border border-gray-300"
               >
                 <Clipboard className="w-3.5 h-3.5" /> Paste
               </button>
@@ -148,140 +127,89 @@ export default function Downloader() {
           <button
             type="submit"
             disabled={loading}
-            className="flex items-center justify-center gap-2 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white font-semibold px-8 py-4 rounded-xl shadow-lg shadow-purple-600/30 transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:hover:scale-100"
+            className="bg-black hover:bg-gray-800 text-white font-medium text-sm px-6 py-3 rounded disabled:opacity-50 flex items-center justify-center gap-2"
           >
-            {loading ? (
-              <>
-                <Loader2 className="w-5 h-5 animate-spin" />
-                <span>Processing...</span>
-              </>
-            ) : (
-              <>
-                <Download className="w-5 h-5" />
-                <span>Download Now</span>
-              </>
-            )}
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+            <span>Fetch Video</span>
           </button>
         </form>
 
-        {/* Quick Supported Platforms Badges */}
-        <div className="mt-4 flex flex-wrap items-center justify-center gap-3 text-xs text-slate-400 border-t border-slate-800/80 pt-4">
-          <span className="font-semibold text-slate-500">Supported Platforms:</span>
-          <span className="px-2.5 py-1 bg-red-500/10 text-red-400 border border-red-500/20 rounded-md font-medium">YouTube</span>
-          <span className="px-2.5 py-1 bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 rounded-md font-medium">TikTok</span>
-          <span className="px-2.5 py-1 bg-yellow-500/10 text-yellow-400 border border-yellow-500/20 rounded-md font-medium">Snapchat</span>
-          <span className="px-2.5 py-1 bg-pink-500/10 text-pink-400 border border-pink-500/20 rounded-md font-medium">Instagram</span>
-          <span className="px-2.5 py-1 bg-slate-500/10 text-slate-300 border border-slate-500/20 rounded-md font-medium">X (Twitter)</span>
-          <span className="px-2.5 py-1 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-md font-medium">Vimeo</span>
+        <div className="mt-4 flex flex-wrap items-center justify-center gap-2 text-xs text-gray-500 border-t border-gray-100 pt-3">
+          <span className="font-semibold text-gray-700">Supported Sites:</span>
+          <span className="bg-gray-100 border border-gray-200 px-2 py-0.5 rounded text-gray-700">YouTube</span>
+          <span className="bg-gray-100 border border-gray-200 px-2 py-0.5 rounded text-gray-700">TikTok</span>
+          <span className="bg-gray-100 border border-gray-200 px-2 py-0.5 rounded text-gray-700">Snapchat</span>
+          <span className="bg-gray-100 border border-gray-200 px-2 py-0.5 rounded text-gray-700">Instagram</span>
+          <span className="bg-gray-100 border border-gray-200 px-2 py-0.5 rounded text-gray-700">X / Twitter</span>
         </div>
       </div>
 
-      {/* Error Message */}
       {error && (
-        <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-xl flex items-center gap-3 mb-8">
-          <AlertCircle className="w-5 h-5 flex-shrink-0" />
-          <p className="text-sm font-medium">{error}</p>
+        <div className="bg-red-50 border border-red-200 text-red-700 p-3.5 rounded text-sm flex items-center gap-2 mb-6">
+          <AlertCircle className="w-4 h-4 flex-shrink-0" />
+          <span>{error}</span>
         </div>
       )}
 
-      {/* Video Details Card & Download Options */}
       {videoInfo && (
-        <div className="bg-slate-900 border border-purple-500/30 rounded-2xl p-6 shadow-2xl space-y-6 animate-fadeIn">
-          <div className="flex flex-col md:flex-row gap-6 items-start">
-            <div className="relative group rounded-xl overflow-hidden w-full md:w-80 flex-shrink-0 bg-slate-950 aspect-video border border-slate-800">
+        <div className="bg-white border border-gray-200 rounded-lg p-5 shadow-sm space-y-4">
+          <div className="flex flex-col sm:flex-row gap-4 items-start">
+            {videoInfo.thumbnail ? (
               <img
                 src={videoInfo.thumbnail}
                 alt={videoInfo.title}
-                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                className="w-full sm:w-48 aspect-video object-cover rounded border border-gray-200 bg-gray-100"
               />
-              <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                <PlayCircle className="w-12 h-12 text-white" />
+            ) : (
+              <div className="w-full sm:w-48 aspect-video rounded border border-gray-200 bg-gray-100 flex items-center justify-center text-xs text-gray-400">
+                No Thumbnail Available
               </div>
-              <span className="absolute bottom-2 right-2 bg-black/80 px-2 py-0.5 rounded text-xs font-mono text-slate-200">
-                {videoInfo.duration}
-              </span>
-            </div>
+            )}
 
-            <div className="flex-1 space-y-3">
-              <div className="flex items-center gap-2">
-                <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-purple-500/20 text-purple-300 border border-purple-500/30 uppercase">
-                  {videoInfo.platformName}
-                </span>
-                <span className="text-xs text-slate-400">{videoInfo.uploader}</span>
-              </div>
-              <h3 className="text-xl font-bold text-white line-clamp-2">
+            <div className="flex-1 space-y-2">
+              <span className="inline-block bg-gray-100 text-gray-800 border border-gray-200 px-2 py-0.5 rounded text-xs font-semibold uppercase">
+                {videoInfo.platformName}
+              </span>
+              <h3 className="text-base font-bold text-gray-900 leading-snug">
                 {videoInfo.title}
               </h3>
-              <p className="text-xs text-slate-400">
-                Choose desired quality output: Standard options up to 4K Ultra High Definition (2160p) or MP3 Audio.
-              </p>
+              {videoInfo.uploader && (
+                <p className="text-xs text-gray-500">Uploader: {videoInfo.uploader}</p>
+              )}
 
-              {/* Quality Selector List */}
-              <div className="space-y-2 pt-2">
-                <label className="text-xs font-semibold text-slate-300 block">Select Video/Audio Format:</label>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div className="pt-2">
+                <label className="text-xs font-medium text-gray-700 block mb-1">Select Quality:</label>
+                <select
+                  value={selectedFormat}
+                  onChange={(e) => setSelectedFormat(e.target.value)}
+                  className="w-full sm:w-auto border border-gray-300 rounded px-3 py-1.5 text-sm bg-white text-gray-900 focus:outline-none focus:border-black"
+                >
                   {videoInfo.formats.map((fmt: FormatOption) => (
-                    <button
-                      key={fmt.formatId}
-                      type="button"
-                      onClick={() => setSelectedFormat(fmt.formatId)}
-                      className={`flex items-center justify-between px-3.5 py-2.5 rounded-xl border text-left text-xs transition-all ${
-                        selectedFormat === fmt.formatId
-                          ? 'bg-purple-600/20 border-purple-500 text-white font-semibold ring-1 ring-purple-500'
-                          : 'bg-slate-950/60 border-slate-800 text-slate-300 hover:border-slate-700'
-                      }`}
-                    >
-                      <div className="flex items-center gap-2">
-                        {fmt.isAudioOnly ? <Music className="w-4 h-4 text-pink-400" /> : <Film className="w-4 h-4 text-purple-400" />}
-                        <div>
-                          <div className="font-medium text-slate-100">{fmt.quality}</div>
-                          <div className="text-[10px] text-slate-400">{fmt.resolution} • {fmt.ext.toUpperCase()}</div>
-                        </div>
-                      </div>
-                      <span className="text-[10px] font-mono bg-slate-800 text-slate-300 px-2 py-0.5 rounded">
-                        {fmt.filesize}
-                      </span>
-                    </button>
+                    <option key={fmt.formatId} value={fmt.formatId}>
+                      {fmt.quality} ({fmt.resolution}) - {fmt.ext.toUpperCase()}
+                    </option>
                   ))}
-                </div>
+                </select>
               </div>
 
-              {/* Final Download Button */}
-              <div className="pt-4 flex flex-col sm:flex-row items-center gap-3">
+              <div className="pt-3">
                 <button
                   type="button"
                   onClick={handleDownload}
                   disabled={downloading}
-                  className="w-full sm:w-auto flex-1 flex items-center justify-center gap-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-bold py-3.5 px-6 rounded-xl shadow-lg shadow-emerald-500/20 transition-all active:scale-[0.98] disabled:opacity-50"
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-medium text-sm px-5 py-2.5 rounded flex items-center gap-2 disabled:opacity-50"
                 >
-                  {downloading ? (
+                  {downloadSuccess ? (
                     <>
-                      <Loader2 className="w-5 h-5 animate-spin" />
-                      <span>Preparing Download File...</span>
-                    </>
-                  ) : downloadSuccess ? (
-                    <>
-                      <Check className="w-5 h-5 text-emerald-300" />
-                      <span>Download Started!</span>
+                      <Check className="w-4 h-4" />
+                      <span>Download Initiated</span>
                     </>
                   ) : (
                     <>
-                      <Download className="w-5 h-5" />
-                      <span>Download Selected Format</span>
+                      <Download className="w-4 h-4" />
+                      <span>Download Video</span>
                     </>
                   )}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    navigator.clipboard.writeText(videoInfo.url);
-                    alert('Video link copied to clipboard!');
-                  }}
-                  className="p-3.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl transition-colors border border-slate-700"
-                  title="Share link"
-                >
-                  <Share2 className="w-5 h-5" />
                 </button>
               </div>
             </div>

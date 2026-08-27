@@ -71,6 +71,10 @@ export async function getRealVideoDetails(url: string): Promise<VideoInfo> {
       '-j',
       '--no-warnings',
       '--no-playlist',
+      '--js-runtimes',
+      'node',
+      '--remote-components',
+      'ejs:github',
       url.trim(),
     ]);
 
@@ -97,7 +101,7 @@ export async function getRealVideoDetails(url: string): Promise<VideoInfo> {
         resolution: '3840x2160',
         ext: 'mp4',
         filesize: fmt4k?.filesize ? `~${Math.round(fmt4k.filesize / (1024 * 1024))} MB` : '~250 MB',
-        url: fmt4k?.url || json.url,
+        url: url.trim(),
       });
 
       formats.push({
@@ -106,7 +110,7 @@ export async function getRealVideoDetails(url: string): Promise<VideoInfo> {
         resolution: '1920x1080',
         ext: 'mp4',
         filesize: fmt1080?.filesize ? `~${Math.round(fmt1080.filesize / (1024 * 1024))} MB` : '~85 MB',
-        url: fmt1080?.url || json.url,
+        url: url.trim(),
       });
 
       formats.push({
@@ -115,7 +119,7 @@ export async function getRealVideoDetails(url: string): Promise<VideoInfo> {
         resolution: '1280x720',
         ext: 'mp4',
         filesize: fmt720?.filesize ? `~${Math.round(fmt720.filesize / (1024 * 1024))} MB` : '~45 MB',
-        url: fmt720?.url || json.url,
+        url: url.trim(),
       });
 
       formats.push({
@@ -124,7 +128,7 @@ export async function getRealVideoDetails(url: string): Promise<VideoInfo> {
         resolution: '854x480',
         ext: 'mp4',
         filesize: fmt480?.filesize ? `~${Math.round(fmt480.filesize / (1024 * 1024))} MB` : '~20 MB',
-        url: fmt480?.url || json.url,
+        url: url.trim(),
       });
 
       formats.push({
@@ -133,11 +137,11 @@ export async function getRealVideoDetails(url: string): Promise<VideoInfo> {
         resolution: 'Audio (320kbps)',
         ext: 'mp3',
         filesize: fmtAudio?.filesize ? `~${Math.round(fmtAudio.filesize / (1024 * 1024))} MB` : '~8 MB',
-        url: fmtAudio?.url || json.url,
+        url: url.trim(),
         isAudioOnly: true,
       });
     } else {
-      formats.push(...getStandardFormats(title));
+      formats.push(...getStandardFormats(title, url.trim()));
     }
 
     return {
@@ -204,11 +208,11 @@ async function fetchOembedDetails(url: string, platformInfo: { type: PlatformTyp
     uploader,
     platform: platformInfo.type,
     platformName: platformInfo.name,
-    formats: getStandardFormats(title),
+    formats: getStandardFormats(title, url),
   };
 }
 
-export function getStandardFormats(videoTitle: string): FormatOption[] {
+export function getStandardFormats(videoTitle: string, videoUrl: string = ''): FormatOption[] {
   return [
     {
       formatId: '4k-2160p',
@@ -216,6 +220,7 @@ export function getStandardFormats(videoTitle: string): FormatOption[] {
       resolution: '3840x2160',
       ext: 'mp4',
       filesize: '~250 MB',
+      url: videoUrl,
     },
     {
       formatId: '1080p',
@@ -223,6 +228,7 @@ export function getStandardFormats(videoTitle: string): FormatOption[] {
       resolution: '1920x1080',
       ext: 'mp4',
       filesize: '~85 MB',
+      url: videoUrl,
     },
     {
       formatId: '720p',
@@ -230,6 +236,7 @@ export function getStandardFormats(videoTitle: string): FormatOption[] {
       resolution: '1280x720',
       ext: 'mp4',
       filesize: '~45 MB',
+      url: videoUrl,
     },
     {
       formatId: '480p',
@@ -237,6 +244,7 @@ export function getStandardFormats(videoTitle: string): FormatOption[] {
       resolution: '854x480',
       ext: 'mp4',
       filesize: '~20 MB',
+      url: videoUrl,
     },
     {
       formatId: 'mp3-audio',
@@ -244,6 +252,7 @@ export function getStandardFormats(videoTitle: string): FormatOption[] {
       resolution: 'Audio (320kbps)',
       ext: 'mp3',
       filesize: '~8 MB',
+      url: videoUrl,
       isAudioOnly: true,
     },
   ];

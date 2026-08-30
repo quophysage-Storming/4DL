@@ -16,8 +16,10 @@ export async function GET(req: NextRequest) {
 
   const isAudio = formatId.includes('mp3');
   const extension = isAudio ? 'mp3' : 'mp4';
-  const sanitizedTitle = title.replace(/[^a-zA-Z0-9_-]/g, '_') || 'video';
+  const cleanTitle = title.replace(/\.(mp4|mp3|pdf|webm|mov)$/i, '');
+  const sanitizedTitle = cleanTitle.replace(/[^a-zA-Z0-9_-]/g, '_').replace(/_+/g, '_').replace(/^_+|_+$/g, '') || 'video';
   const filename = `${sanitizedTitle}_${formatId}.${extension}`;
+  const contentType = isAudio ? 'audio/mpeg' : 'video/mp4';
 
   try {
     // If targetUrl points to a direct video media file (mp4/webm/mov/mp3/m4a), stream it directly
@@ -30,15 +32,16 @@ export async function GET(req: NextRequest) {
       });
 
       if (upstreamRes.ok && upstreamRes.body) {
-        const contentType = upstreamRes.headers.get('content-type') || (isAudio ? 'audio/mpeg' : 'video/mp4');
+        const upstreamContentType = upstreamRes.headers.get('content-type') || contentType;
         // Ensure we don't return HTML content
-        if (!contentType.includes('text/html')) {
+        if (!upstreamContentType.includes('text/html') && !upstreamContentType.includes('pdf')) {
           return new NextResponse(upstreamRes.body as any, {
             status: 200,
             headers: {
               'Content-Type': contentType,
               'Content-Disposition': `attachment; filename="${filename}"`,
-              'Cache-Control': 'no-cache',
+              'X-Content-Type-Options': 'nosniff',
+              'Cache-Control': 'no-cache, no-store, must-revalidate',
             },
           });
         }
@@ -62,12 +65,12 @@ export async function GET(req: NextRequest) {
     });
 
     if (fallbackRes.ok && fallbackRes.body) {
-      const contentType = isAudio ? 'audio/mpeg' : 'video/mp4';
       return new NextResponse(fallbackRes.body as any, {
         status: 200,
         headers: {
           'Content-Type': contentType,
           'Content-Disposition': `attachment; filename="${filename}"`,
+          'X-Content-Type-Options': 'nosniff',
           'Cache-Control': 'no-cache, no-store, must-revalidate',
         },
       });

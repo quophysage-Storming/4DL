@@ -73,9 +73,13 @@ export default function Downloader() {
 
     const downloadUrl = `/api/download?url=${encodeURIComponent(directUrl)}&title=${encodeURIComponent(videoInfo.title)}&formatId=${selectedFormat}`;
 
+    const cleanTitle = videoInfo.title.replace(/\.(mp4|mp3|pdf|webm|mov)$/i, '');
+    const sanitizedTitle = cleanTitle.replace(/[^a-zA-Z0-9_-]/g, '_').replace(/_+/g, '_').replace(/^_+|_+$/g, '') || 'video';
+    const ext = selectedFormat.includes('mp3') ? 'mp3' : (selectedFmt?.ext || 'mp4');
+
     const link = document.createElement('a');
     link.href = downloadUrl;
-    link.download = `${videoInfo.title.replace(/[^a-zA-Z0-9]/g, '_')}_${selectedFormat}.${selectedFmt?.ext || 'mp4'}`;
+    link.download = `${sanitizedTitle}_${selectedFormat}.${ext}`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);

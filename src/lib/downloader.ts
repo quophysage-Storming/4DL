@@ -66,11 +66,15 @@ export async function getRealVideoDetails(url: string): Promise<VideoInfo> {
   const platformInfo = detectPlatform(url);
 
   try {
-    // Attempt yt-dlp metadata extraction
+    // Attempt yt-dlp metadata extraction with JS runtime flags
     const { stdout } = await execFileAsync('yt-dlp', [
       '-j',
       '--no-warnings',
       '--no-playlist',
+      '--js-runtimes',
+      'node',
+      '--remote-components',
+      'ejs:github',
       url.trim(),
     ]);
 
@@ -84,12 +88,15 @@ export async function getRealVideoDetails(url: string): Promise<VideoInfo> {
     const formats: FormatOption[] = [];
 
     if (json.formats && Array.isArray(json.formats)) {
-      // Find 4K / 2160p format
-      const fmt4k = json.formats.find((f: any) => f.height >= 1440 || f.format_note?.includes('2160'));
-      const fmt1080 = json.formats.find((f: any) => f.height >= 1080 || f.format_note?.includes('1080'));
-      const fmt720 = json.formats.find((f: any) => f.height >= 720 || f.format_note?.includes('720'));
-      const fmt480 = json.formats.find((f: any) => f.height >= 480 || f.format_note?.includes('480'));
-      const fmtAudio = json.formats.find((f: any) => f.vcodec === 'none' && f.acodec !== 'none');
+      // Find valid formats with direct video + audio or single stream URLs
+      const playableFormats = json.formats.filter((f: any) => f.url && (f.vcodec !== 'none' || f.acodec !== 'none'));
+      const defaultUrl = json.url || playableFormats[0]?.url || url;
+
+      const fmt4k = playableFormats.find((f: any) => f.height >= 1440 || f.format_note?.includes('2160'));
+      const fmt1080 = playableFormats.find((f: any) => f.height >= 1080 || f.format_note?.includes('1080'));
+      const fmt720 = playableFormats.find((f: any) => f.height >= 720 || f.format_note?.includes('720'));
+      const fmt480 = playableFormats.find((f: any) => f.height >= 480 || f.format_note?.includes('480'));
+      const fmtAudio = playableFormats.find((f: any) => f.vcodec === 'none' && f.acodec !== 'none');
 
       formats.push({
         formatId: '4k-2160p',
@@ -97,7 +104,7 @@ export async function getRealVideoDetails(url: string): Promise<VideoInfo> {
         resolution: '3840x2160',
         ext: 'mp4',
         filesize: fmt4k?.filesize ? `~${Math.round(fmt4k.filesize / (1024 * 1024))} MB` : '~250 MB',
-        url: fmt4k?.url || json.url,
+        url: fmt4k?.url || defaultUrl,
       });
 
       formats.push({
@@ -106,7 +113,7 @@ export async function getRealVideoDetails(url: string): Promise<VideoInfo> {
         resolution: '1920x1080',
         ext: 'mp4',
         filesize: fmt1080?.filesize ? `~${Math.round(fmt1080.filesize / (1024 * 1024))} MB` : '~85 MB',
-        url: fmt1080?.url || json.url,
+        url: fmt1080?.url || defaultUrl,
       });
 
       formats.push({
@@ -115,7 +122,7 @@ export async function getRealVideoDetails(url: string): Promise<VideoInfo> {
         resolution: '1280x720',
         ext: 'mp4',
         filesize: fmt720?.filesize ? `~${Math.round(fmt720.filesize / (1024 * 1024))} MB` : '~45 MB',
-        url: fmt720?.url || json.url,
+        url: fmt720?.url || defaultUrl,
       });
 
       formats.push({
@@ -124,7 +131,7 @@ export async function getRealVideoDetails(url: string): Promise<VideoInfo> {
         resolution: '854x480',
         ext: 'mp4',
         filesize: fmt480?.filesize ? `~${Math.round(fmt480.filesize / (1024 * 1024))} MB` : '~20 MB',
-        url: fmt480?.url || json.url,
+        url: fmt480?.url || defaultUrl,
       });
 
       formats.push({
@@ -133,7 +140,7 @@ export async function getRealVideoDetails(url: string): Promise<VideoInfo> {
         resolution: 'Audio (320kbps)',
         ext: 'mp3',
         filesize: fmtAudio?.filesize ? `~${Math.round(fmtAudio.filesize / (1024 * 1024))} MB` : '~8 MB',
-        url: fmtAudio?.url || json.url,
+        url: fmtAudio?.url || defaultUrl,
         isAudioOnly: true,
       });
     } else {

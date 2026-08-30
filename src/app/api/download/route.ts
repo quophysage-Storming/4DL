@@ -31,19 +31,20 @@ export async function GET(req: NextRequest) {
       },
     });
 
-    if (upstreamRes.ok && upstreamRes.body) {
-      const upstreamContentType = upstreamRes.headers.get('content-type') || contentType;
-      // Ensure we stream media content directly if available
-      if (!upstreamContentType.includes('text/html') && !upstreamContentType.includes('pdf')) {
-        return new NextResponse(upstreamRes.body as any, {
-          status: 200,
-          headers: {
-            'Content-Type': contentType,
-            'Content-Disposition': `attachment; filename="${filename}"`,
-            'X-Content-Type-Options': 'nosniff',
-            'Cache-Control': 'no-cache, no-store, must-revalidate',
-          },
-        });
+      if (upstreamRes.ok && upstreamRes.body) {
+        const upstreamContentType = upstreamRes.headers.get('content-type') || contentType;
+        // Ensure we don't return HTML content
+        if (!upstreamContentType.includes('text/html') && !upstreamContentType.includes('pdf')) {
+          return new NextResponse(upstreamRes.body as any, {
+            status: 200,
+            headers: {
+              'Content-Type': contentType,
+              'Content-Disposition': `attachment; filename="${filename}"`,
+              'X-Content-Type-Options': 'nosniff',
+              'Cache-Control': 'no-cache, no-store, must-revalidate',
+            },
+          });
+        }
       }
     }
   } catch {

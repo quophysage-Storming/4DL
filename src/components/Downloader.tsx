@@ -69,13 +69,16 @@ export default function Downloader() {
     setDownloading(true);
 
     const selectedFmt = videoInfo.formats.find(f => f.formatId === selectedFormat) || videoInfo.formats[0];
-    const directUrl = selectedFmt?.url || videoInfo.url;
 
-    const downloadUrl = `/api/download?url=${encodeURIComponent(directUrl)}&title=${encodeURIComponent(videoInfo.title)}&formatId=${selectedFormat}`;
+    const downloadUrl = `/api/download?url=${encodeURIComponent(videoInfo.url)}&title=${encodeURIComponent(videoInfo.title)}&formatId=${selectedFormat}`;
+
+    const cleanTitle = videoInfo.title.replace(/\.(mp4|mp3|pdf|webm|mov)$/i, '');
+    const sanitizedTitle = cleanTitle.replace(/[^a-zA-Z0-9_-]/g, '_').replace(/_+/g, '_').replace(/^_+|_+$/g, '') || 'video';
+    const ext = selectedFormat.includes('mp3') ? 'mp3' : (selectedFmt?.ext || 'mp4');
 
     const link = document.createElement('a');
     link.href = downloadUrl;
-    link.download = `${videoInfo.title.replace(/[^a-zA-Z0-9]/g, '_')}_${selectedFormat}.${selectedFmt?.ext || 'mp4'}`;
+    link.download = `${sanitizedTitle}.${ext}`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);

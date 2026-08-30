@@ -31,5 +31,11 @@ describe('4DL Video Downloader Core Unit Tests', () => {
     expect(info.title).toContain('Rick Astley');
     expect(info.thumbnail).toBeTruthy();
     expect(info.formats.length).toBeGreaterThan(0);
+  }, 15000);
+
+  it('handles invalid URLs gracefully', async () => {
+    const info = await getRealVideoDetails('https://example.com/not-a-video');
+    expect(info.platform).toBe('generic');
+    expect(info.formats.length).toBeGreaterThan(0);
   });
 });

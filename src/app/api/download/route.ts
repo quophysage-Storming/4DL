@@ -1,15 +1,41 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { isValidUrl } from '@/lib/downloader';
+import { getYtDlpAvailable, resolveWithYtDlp } from '@/lib/yt-dlp';
 import { promisify } from 'util';
 import { execFile } from 'child_process';
 
 const execFileAsync = promisify(execFile);
+
+async function fetchWithRetries(url: string, init: RequestInit = {}, retries = 2, timeout = 30_000) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const controller = new AbortController();
+      const id = setTimeout(() => controller.abort(), timeout);
+      const res = await fetch(url, { ...init, signal: controller.signal });
+      clearTimeout(id);
+
+      if (res.status >= 500 && attempt < retries) {
+        // retry on server errors
+        await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
+        continue;
+      }
+
+      return res;
+    } catch (err) {
+      if (attempt === retries) throw err;
+      await new Promise((r) => setTimeout(r, 300 * (attempt + 1)));
+    }
+  }
+  throw new Error('Unreachable');
+}
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const targetUrl = searchParams.get('url');
   const formatId = (searchParams.get('formatId') || '4k-2160p').trim();
   const title = searchParams.get('title') || 'video';
+  const cookieHeader = req.headers.get('cookie') || searchParams.get('cookie') || undefined;
+  const rangeHeader = req.headers.get('range') || undefined;
 
   if (!targetUrl || !isValidUrl(targetUrl)) {
     return NextResponse.json(
@@ -25,84 +51,95 @@ export async function GET(req: NextRequest) {
   const filename = `${sanitizedTitle}_${formatId}.${extension}`;
   const contentType = isAudio ? 'audio/mpeg' : 'video/mp4';
 
-  // Try to resolve a direct media URL using yt-dlp and stream that.
+  // First attempt: try resolving media URL(s) with yt-dlp if available
   try {
-    // Choose a format specifier that prefers a single merged file when possible.
-    const formatSpecifier = isAudio
-      ? 'bestaudio'
-      : formatId === '4k-2160p'
-      ? 'best[height>=2160]/best'
-      : 'best';
-
-    // Use yt-dlp -g to print the direct URL(s). We request a single URL when possible.
-    const args = ['-g', '-f', formatSpecifier, targetUrl.trim()];
-    const { stdout } = await execFileAsync('yt-dlp', args, { timeout: 60_000 });
-
-    const urls = stdout.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
-    if (urls.length > 0) {
-      // Prefer the first URL. In most cases -f will return a single playable URL.
-      const mediaUrl = urls[0];
-
-      // If it's a data URL or invalid, fall through to other strategies
-      if (/^https?:\/\//i.test(mediaUrl)) {
-        const upstreamRes = await fetch(mediaUrl, {
-          headers: {
+    if (await getYtDlpAvailable()) {
+      const resolved = await resolveWithYtDlp(targetUrl.trim(), formatId, cookieHeader);
+      if (resolved && resolved.urls && resolved.urls.length > 0) {
+        const mediaUrl = resolved.urls[0];
+        if (/^https?:\/\//i.test(mediaUrl)) {
+          const headers: Record<string, string> = {
             'User-Agent':
               'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          },
-        });
+          };
+          if (cookieHeader) headers['Cookie'] = cookieHeader;
+          if (rangeHeader) headers['Range'] = rangeHeader;
 
-        if (upstreamRes.ok && upstreamRes.body) {
-          const upstreamContentType = upstreamRes.headers.get('content-type') || contentType;
-          if (!upstreamContentType.includes('text/html') && !upstreamContentType.includes('pdf')) {
+          const upstreamRes = await fetchWithRetries(mediaUrl, { headers }, 2, 60_000);
+
+          if ((upstreamRes.status === 200 || upstreamRes.status === 206) && upstreamRes.body) {
+            // Forward important headers
+            const respHeaders: Record<string, string> = {
+              'Content-Type': contentType,
+              'Content-Disposition': `attachment; filename="${filename}"`,
+              'X-Content-Type-Options': 'nosniff',
+              'Cache-Control': 'no-cache, no-store, must-revalidate',
+            };
+
+            const upstreamContentType = upstreamRes.headers.get('content-type');
+            if (upstreamContentType) respHeaders['Content-Type'] = upstreamContentType;
+
+            const contentRange = upstreamRes.headers.get('content-range');
+            const acceptRanges = upstreamRes.headers.get('accept-ranges') || 'bytes';
+            const contentLength = upstreamRes.headers.get('content-length');
+
+            if (contentRange) respHeaders['Content-Range'] = contentRange;
+            if (acceptRanges) respHeaders['Accept-Ranges'] = acceptRanges;
+            if (contentLength) respHeaders['Content-Length'] = contentLength;
+
             return new NextResponse(upstreamRes.body as any, {
-              status: 200,
-              headers: {
-                'Content-Type': contentType,
-                'Content-Disposition': `attachment; filename="${filename}"`,
-                'X-Content-Type-Options': 'nosniff',
-                'Cache-Control': 'no-cache, no-store, must-revalidate',
-              },
+              status: upstreamRes.status,
+              headers: respHeaders,
             });
           }
         }
       }
     }
   } catch (err) {
-    // If yt-dlp isn't available or fails, we'll try to stream the target URL directly as a fallback.
-    // Intentionally fall through to the next strategy.
-    console.warn('yt-dlp resolution failed:', (err as Error)?.message || err);
+    // swallow and fallthrough to direct streaming attempts
+    console.warn('yt-dlp resolution or streaming failed:', (err as Error)?.message || err);
   }
 
-  // If the targetUrl is already a direct media file (mp4/webm/mov/mp3/m4a), try streaming it directly.
+  // Second attempt: if targetUrl points to a direct media file, try streaming it (forward Range and cookies)
   try {
     if (/\.(mp4|webm|mov|mp3|m4a|aac)(\?.*)?$/i.test(targetUrl) || targetUrl.includes('googlevideo.com') || targetUrl.includes('cdn')) {
-      const upstreamRes = await fetch(targetUrl, {
-        headers: {
-          'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        },
-      });
+      const headers: Record<string, string> = {
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      };
+      if (cookieHeader) headers['Cookie'] = cookieHeader;
+      if (rangeHeader) headers['Range'] = rangeHeader;
 
-      if (upstreamRes.ok && upstreamRes.body) {
-        const upstreamContentType = upstreamRes.headers.get('content-type') || contentType;
-        if (!upstreamContentType.includes('text/html') && !upstreamContentType.includes('pdf')) {
-          return new NextResponse(upstreamRes.body as any, {
-            status: 200,
-            headers: {
-              'Content-Type': contentType,
-              'Content-Disposition': `attachment; filename="${filename}"`,
-              'X-Content-Type-Options': 'nosniff',
-              'Cache-Control': 'no-cache, no-store, must-revalidate',
-            },
-          });
-        }
+      const upstreamRes = await fetchWithRetries(targetUrl, { headers }, 2, 60_000);
+      if ((upstreamRes.status === 200 || upstreamRes.status === 206) && upstreamRes.body) {
+        const respHeaders: Record<string, string> = {
+          'Content-Type': contentType,
+          'Content-Disposition': `attachment; filename="${filename}"`,
+          'X-Content-Type-Options': 'nosniff',
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+        };
+
+        const upstreamContentType = upstreamRes.headers.get('content-type');
+        if (upstreamContentType) respHeaders['Content-Type'] = upstreamContentType;
+
+        const contentRange = upstreamRes.headers.get('content-range');
+        const acceptRanges = upstreamRes.headers.get('accept-ranges') || 'bytes';
+        const contentLength = upstreamRes.headers.get('content-length');
+
+        if (contentRange) respHeaders['Content-Range'] = contentRange;
+        if (acceptRanges) respHeaders['Accept-Ranges'] = acceptRanges;
+        if (contentLength) respHeaders['Content-Length'] = contentLength;
+
+        return new NextResponse(upstreamRes.body as any, {
+          status: upstreamRes.status,
+          headers: respHeaders,
+        });
       }
     }
-  } catch {
-    // proceed to final fallback
+  } catch (err) {
+    console.warn('Direct media streaming failed:', (err as Error)?.message || err);
   }
 
-  // Final fallback: inform the client we couldn't resolve a downloadable stream.
-  return NextResponse.json({ error: 'Failed to resolve a downloadable media stream for the provided URL. Ensure yt-dlp is installed on the server and the URL is from a supported platform.' }, { status: 502 });
+  // Final fallback: tell client we couldn't resolve a downloadable stream
+  return NextResponse.json({ error: 'Failed to resolve a downloadable media stream for the provided URL. Ensure yt-dlp is installed on the server (see /api/health) and the URL is from a supported platform. Optionally provide cookies in the request if the content is restricted.' }, { status: 502 });
 }
